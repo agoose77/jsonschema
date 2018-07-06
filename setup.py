@@ -41,6 +41,7 @@ setup(
         "pyrsistent>=0.14.0",
         "six>=1.11.0",
         "functools32;python_version<'3'",
+        "hyperlink>=18.0.0",
     ],
     extras_require={
         "format": [
