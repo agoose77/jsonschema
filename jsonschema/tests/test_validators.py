@@ -4,6 +4,7 @@ from unittest import TestCase
 import json
 import sys
 import unittest
+from hyperlink import URL
 
 from twisted.trial.unittest import SynchronousTestCase
 
@@ -16,6 +17,7 @@ from jsonschema import (
     validators,
 )
 from jsonschema.tests.compat import mock
+from jsonschema.validators import _id_url_from_schema
 
 
 class TestCreateAndExtend(TestCase):
@@ -691,7 +693,7 @@ class TestValidationErrorDetails(TestCase):
             },
             "type": "object",
             "required": ["root"],
-            "properties": {"root": {"$ref": "#/definitions/node"}},
+            "properties": {"root": {"$ref": u"#/definitions/node"}},
         }
 
         instance = {
@@ -867,11 +869,11 @@ class ValidatorTestMixin(object):
         self.assertIsInstance(self.validator.resolver, validators.RefResolver)
 
     def test_it_delegates_to_a_ref_resolver(self):
-        resolver = validators.RefResolver("", {})
-        schema = {"$ref": mock.Mock()}
+        resolver = validators.RefResolver(u"", {})
+        schema = {"$ref": u"#/some/ref"}
 
         with mock.patch.object(resolver, "resolve") as resolve:
-            resolve.return_value = "url", {"type": "integer"}
+            resolve.return_value = URL(), {"type": "integer"}
             with self.assertRaises(ValidationError):
                 self.validator_class(schema, resolver=resolver).validate(None)
 
@@ -1028,9 +1030,9 @@ class TestValidatorFor(TestCase):
 
     def test_custom_validator(self):
         Validator = validators.create(
-            meta_schema={"id": "meta schema id"},
+            meta_schema={"id": u"meta schema id"},
             version="12",
-            id_of=lambda s: s.get("id", ""),
+            id_of=lambda s: _id_url_from_schema("id", s)
         )
         schema = {"$schema": "meta schema id"}
         self.assertIs(
@@ -1150,7 +1152,7 @@ class TestRefResolver(TestCase):
         self.assertFalse(remote.called)
 
     def test_it_resolves_local_refs(self):
-        ref = "#/properties/foo"
+        ref = u"#/properties/foo"
         self.referrer["properties"] = {"foo": object()}
         with self.resolver.resolving(ref) as resolved:
             self.assertEqual(resolved, self.referrer["properties"]["foo"])
@@ -1170,7 +1172,7 @@ class TestRefResolver(TestCase):
         with self.resolver.resolving(self.stored_uri) as resolved:
             self.assertIs(resolved, self.stored_schema)
 
-        self.resolver.store["cached_ref"] = {"foo": 12}
+        self.resolver.store[URL.from_text(u"cached_ref")] = {"foo": 12}
         with self.resolver.resolving("cached_ref#/foo") as resolved:
             self.assertEqual(resolved, 12)
 
@@ -1182,7 +1184,7 @@ class TestRefResolver(TestCase):
             requests.get.return_value.json.return_value = schema
             with self.resolver.resolving(ref) as resolved:
                 self.assertEqual(resolved, 12)
-        requests.get.assert_called_once_with("http://bar")
+        requests.get.assert_called_once_with(URL.from_text(u"http://bar"))
 
     def test_it_retrieves_unstored_refs_via_urlopen(self):
         ref = "http://bar#baz"
@@ -1202,8 +1204,8 @@ class TestRefResolver(TestCase):
             schema,
             id_of=lambda schema: schema.get(u"id", u""),
         )
-        self.assertEqual(resolver.base_uri, "foo")
-        self.assertEqual(resolver.resolution_scope, "foo")
+        self.assertEqual(resolver.base_uri.to_text(), "foo")
+        self.assertEqual(resolver.resolution_scope.to_text(), "foo")
         with resolver.resolving("") as resolved:
             self.assertEqual(resolved, schema)
         with resolver.resolving("#") as resolved:
@@ -1216,8 +1218,8 @@ class TestRefResolver(TestCase):
     def test_it_can_construct_a_base_uri_from_a_schema_without_id(self):
         schema = {}
         resolver = validators.RefResolver.from_schema(schema)
-        self.assertEqual(resolver.base_uri, "")
-        self.assertEqual(resolver.resolution_scope, "")
+        self.assertEqual(resolver.base_uri.to_text(), "")
+        self.assertEqual(resolver.resolution_scope.to_text(), "")
         with resolver.resolving("") as resolved:
             self.assertEqual(resolved, schema)
         with resolver.resolving("#") as resolved:
@@ -1225,7 +1227,7 @@ class TestRefResolver(TestCase):
 
     def test_custom_uri_scheme_handlers(self):
         schema = {"foo": "bar"}
-        ref = "foo://bar"
+        ref = URL.from_text(u"foo://bar")
         foo_handler = mock.Mock(return_value=schema)
         resolver = validators.RefResolver(
             "", {}, handlers={"foo": foo_handler},
@@ -1235,7 +1237,7 @@ class TestRefResolver(TestCase):
         foo_handler.assert_called_once_with(ref)
 
     def test_cache_remote_on(self):
-        ref = "foo://bar"
+        ref = URL.from_text(u"foo://bar")
         foo_handler = mock.Mock()
         resolver = validators.RefResolver(
             "", {}, cache_remote=True, handlers={"foo": foo_handler},
@@ -1247,7 +1249,7 @@ class TestRefResolver(TestCase):
         foo_handler.assert_called_once_with(ref)
 
     def test_cache_remote_off(self):
-        ref = "foo://bar"
+        ref = URL.from_text(u"foo://bar")
         foo_handler = mock.Mock()
         resolver = validators.RefResolver(
             "", {}, cache_remote=False, handlers={"foo": foo_handler},
@@ -1257,7 +1259,7 @@ class TestRefResolver(TestCase):
         self.assertEqual(foo_handler.call_count, 1)
 
     def test_if_you_give_it_junk_you_get_a_resolution_error(self):
-        ref = "foo://bar"
+        ref = URL.from_text(u"foo://bar")
         foo_handler = mock.Mock(side_effect=ValueError("Oh no! What's this?"))
         resolver = validators.RefResolver(
             "", {}, handlers={"foo": foo_handler},

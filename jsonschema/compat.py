@@ -1,6 +1,6 @@
 import operator
 import sys
-
+import hyperlink
 
 try:
     from collections import MutableMapping, Sequence  # noqa
@@ -54,3 +54,7 @@ def urldefrag(url):
 
 
 # flake8: noqa
+def url_from_string(url):
+    if isinstance(url, str):
+        url = unicode(url)
+    return hyperlink.URL.from_text(url)

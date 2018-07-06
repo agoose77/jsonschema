@@ -4,13 +4,14 @@ from warnings import warn
 import contextlib
 import json
 import numbers
+from hyperlink import URL
 
 from six import add_metaclass
 
 from jsonschema import _utils, _validators, _types
 from jsonschema.compat import (
-    Sequence, urljoin, urlsplit, urldefrag, unquote, urlopen,
-    str_types, int_types, iteritems, lru_cache,
+    Sequence, urlopen, str_types, int_types, iteritems,
+    lru_cache, url_from_string
 )
 from jsonschema.exceptions import (
     RefResolutionError,
@@ -108,10 +109,20 @@ class _DefaultTypesDeprecatingMetaClass(type):
         return self._DEFAULT_TYPES
 
 
+def _id_url_from_schema(key, schema):
+    """Return id parameter as URL object from schema if present, else None"""
+    if key in schema:
+        uri = schema[key]
+        if isinstance(uri, str):
+            uri = unicode(uri)
+        return URL.from_text(uri)
+    return None
+
+
 def _id_of(schema):
     if schema is True or schema is False:
-        return u""
-    return schema.get(u"$id", u"")
+        return None
+    return _id_url_from_schema(u"$id", schema)
 
 
 def create(
@@ -416,7 +427,7 @@ Draft3Validator = create(
     },
     type_checker=_types.draft3_type_checker,
     version="draft3",
-    id_of=lambda schema: schema.get(u"id", ""),
+    id_of=lambda schema: _id_url_from_schema(u"id", schema),
 )
 
 Draft4Validator = create(
@@ -451,7 +462,7 @@ Draft4Validator = create(
     },
     type_checker=_types.draft4_type_checker,
     version="draft4",
-    id_of=lambda schema: schema.get(u"id", ""),
+    id_of=lambda schema: _id_url_from_schema(u"id", schema),
 )
 
 
@@ -503,7 +514,7 @@ class RefResolver(object):
 
     Arguments:
 
-        base_uri (str):
+        base_uri (URL or unicode):
 
             The URI of the referring document
 
@@ -552,8 +563,12 @@ class RefResolver(object):
         urljoin_cache=None,
         remote_cache=None,
     ):
+        if not isinstance(base_uri, URL):
+            if isinstance(base_uri, str):
+                base_uri = unicode(base_uri)
+            base_uri = URL.from_text(base_uri)
         if urljoin_cache is None:
-            urljoin_cache = lru_cache(1024)(urljoin)
+            urljoin_cache = lru_cache(1024)(URL.click)
         if remote_cache is None:
             remote_cache = lru_cache(1024)(self.resolve_from_url)
 
@@ -566,7 +581,8 @@ class RefResolver(object):
             (id, validator.META_SCHEMA)
             for id, validator in iteritems(meta_schemas)
         )
-        self.store.update(store)
+        self.store.update({url_from_string(uri): doc
+                           for uri, doc in dict(store).items()})
         self.store[base_uri] = referrer
 
         self._urljoin_cache = urljoin_cache
@@ -595,7 +611,7 @@ class RefResolver(object):
 
         """
 
-        return cls(base_uri=id_of(schema), referrer=schema, *args, **kwargs)
+        return cls(base_uri=id_of(schema) or u"", referrer=schema, *args, **kwargs)
 
     def push_scope(self, scope):
         self._scopes_stack.append(
@@ -618,8 +634,7 @@ class RefResolver(object):
 
     @property
     def base_uri(self):
-        uri, _ = urldefrag(self.resolution_scope)
-        return uri
+        return self.resolution_scope.replace(fragment=u'')
 
     @contextlib.contextmanager
     def in_scope(self, scope):
@@ -637,7 +652,7 @@ class RefResolver(object):
 
         Arguments:
 
-            ref (str):
+            ref (str or unicode or URL):
 
                 The reference to resolve
 
@@ -651,20 +666,23 @@ class RefResolver(object):
             self.pop_scope()
 
     def resolve(self, ref):
+        if isinstance(ref, str):
+            ref = unicode(ref)
         url = self._urljoin_cache(self.resolution_scope, ref)
         return url, self._remote_cache(url)
 
     def resolve_from_url(self, url):
-        url, fragment = urldefrag(url)
+        base_url = url.replace(fragment=u'')
+
         try:
-            document = self.store[url]
+            document = self.store[base_url]
         except KeyError:
             try:
-                document = self.resolve_remote(url)
+                document = self.resolve_remote(base_url)
             except Exception as exc:
                 raise RefResolutionError(exc)
 
-        return self.resolve_fragment(document, fragment)
+        return self.resolve_fragment(document, url.fragment)
 
     def resolve_fragment(self, document, fragment):
         """
@@ -681,9 +699,11 @@ class RefResolver(object):
                 a URI fragment to resolve within it
 
         """
-
+        f0=fragment
+        fragment = URL(fragment=fragment).to_iri().fragment
+        print(fragment, "dec",f0)
         fragment = fragment.lstrip(u"/")
-        parts = unquote(fragment).split(u"/") if fragment else []
+        parts = fragment.split(u"/") if fragment else []
 
         for part in parts:
             part = part.replace(u"~1", u"/").replace(u"~0", u"~")
@@ -722,7 +742,7 @@ class RefResolver(object):
 
         Arguments:
 
-            uri (str):
+            uri (URL):
 
                 The URI to resolve
 
@@ -738,7 +758,7 @@ class RefResolver(object):
         except ImportError:
             requests = None
 
-        scheme = urlsplit(uri).scheme
+        scheme = uri.scheme
 
         if scheme in self.handlers:
             result = self.handlers[scheme](uri)
@@ -755,7 +775,7 @@ class RefResolver(object):
                 result = requests.get(uri).json
         else:
             # Otherwise, pass off to urllib and assume utf-8
-            result = json.loads(urlopen(uri).read().decode("utf-8"))
+            result = json.loads(urlopen(uri.to_text()).read().decode("utf-8"))
 
         if self.cache_remote:
             self.store[uri] = result
@@ -845,4 +865,9 @@ def validator_for(schema, default=_LATEST_VERSION):
     """
     if schema is True or schema is False:
         return default
-    return meta_schemas.get(schema.get(u"$schema", u""), default)
+
+    schema_uri = schema.get(u"$schema", u"")
+    if isinstance(schema_uri, str):
+        schema_uri = unicode(schema_uri)
+    key = URL.from_text(schema_uri)
+    return meta_schemas.get(key, default)
