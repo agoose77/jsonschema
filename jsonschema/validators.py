@@ -108,10 +108,14 @@ class _DefaultTypesDeprecatingMetaClass(type):
         return self._DEFAULT_TYPES
 
 
+def load_uri_from_schema(schema, key):
+    return uri_reference(schema.get(key, ""))
+
+
 def _id_of(schema):
     if schema is True or schema is False:
         return u""
-    return schema.get(u"$id", u"")
+    return load_uri_from_schema(schema, "$id")
 
 
 def create(
@@ -415,7 +419,7 @@ Draft3Validator = create(
     },
     type_checker=_types.draft3_type_checker,
     version="draft3",
-    id_of=lambda schema: schema.get(u"id", ""),
+    id_of=lambda schema: load_uri_from_schema(schema, u"id"),
 )
 
 Draft4Validator = create(
@@ -450,7 +454,7 @@ Draft4Validator = create(
     },
     type_checker=_types.draft4_type_checker,
     version="draft4",
-    id_of=lambda schema: schema.get(u"id", ""),
+    id_of=lambda schema: load_uri_from_schema(schema, u"id"),
 )
 
 
@@ -562,25 +566,28 @@ class RefResolver(object):
         if remote_cache is None:
             remote_cache = lru_cache(1024)(self.resolve_from_url)
 
+        if isinstance(base_uri, basestring):
+            base_uri = uri_reference(base_uri)
+
         if not base_uri:
             base_uri = self.DEFAULT_BASE_URI
 
         base_uri_ref = uri_reference(base_uri)
         if not base_uri_ref.is_absolute():
             assert not base_uri_ref.fragment, "Base URI must not have non-empty fragment"
-            base_uri = base_uri_ref.copy_with(fragment=None).unsplit()
+            base_uri_ref = base_uri_ref.copy_with(fragment=None).unsplit()
 
         self.referrer = referrer
         self.cache_remote = cache_remote
         self.handlers = dict(handlers)
 
-        self._scopes_stack = [base_uri]
+        self._scopes_stack = [base_uri_ref]
         self.store = _utils.URIDict(
             (id, validator.META_SCHEMA)
             for id, validator in iteritems(meta_schemas)
         )
         self.store.update(store)
-        self.store[base_uri] = referrer
+        self.store[base_uri_ref] = referrer
 
         self._urljoin_cache = urljoin_cache
         self._remote_cache = remote_cache
@@ -860,4 +867,4 @@ def validator_for(schema, default=_LATEST_VERSION):
     """
     if schema is True or schema is False:
         return default
-    return meta_schemas.get(schema.get(u"$schema", u""), default)
+    return meta_schemas.get(load_uri_from_schema(schema, u"$schema", default_empty_uri=True), default)
