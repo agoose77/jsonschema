@@ -10,7 +10,7 @@ from rfc3986 import uri_reference
 
 from jsonschema import _utils, _validators, _types
 from jsonschema.compat import (
-    Sequence, urljoin, urlsplit, unquote, urlopen,
+    Sequence, unquote, urlopen,
     str_types, int_types, iteritems, lru_cache,
 )
 from jsonschema.exceptions import (
@@ -754,7 +754,7 @@ class RefResolver(object):
         except ImportError:
             requests = None
 
-        scheme = urlsplit(uri).scheme
+        scheme = uri_reference(uri).scheme
         if scheme in self.handlers:
             result = self.handlers[scheme](uri)
         elif (
