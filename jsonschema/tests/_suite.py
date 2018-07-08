@@ -173,7 +173,12 @@ class _Test(object):
         else:
             def fn(this):
                 with this.assertRaises(jsonschema.ValidationError):
-                    self.validate()
+                    try:
+                        self.validate()
+                    except Exception as exc:
+                        if not isinstance(exc, jsonschema.ValidationError):
+                            print("ERROR", name)
+                        raise
 
         fn.__name__ = name
         return fn

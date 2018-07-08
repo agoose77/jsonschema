@@ -5,6 +5,7 @@ import json
 import sys
 import unittest
 
+from rfc3986 import uri_reference
 from twisted.trial.unittest import SynchronousTestCase
 
 from jsonschema import (
@@ -976,12 +977,6 @@ for format in FormatChecker.checkers:
 
 class TestValidatorFor(TestCase):
     def test_draft_3(self):
-        schema = {"$schema": "http://json-schema.org/draft-03/schema"}
-        self.assertIs(
-            validators.validator_for(schema),
-            validators.Draft3Validator,
-        )
-
         schema = {"$schema": "http://json-schema.org/draft-03/schema#"}
         self.assertIs(
             validators.validator_for(schema),
@@ -989,12 +984,6 @@ class TestValidatorFor(TestCase):
         )
 
     def test_draft_4(self):
-        schema = {"$schema": "http://json-schema.org/draft-04/schema"}
-        self.assertIs(
-            validators.validator_for(schema),
-            validators.Draft4Validator,
-        )
-
         schema = {"$schema": "http://json-schema.org/draft-04/schema#"}
         self.assertIs(
             validators.validator_for(schema),
@@ -1002,12 +991,6 @@ class TestValidatorFor(TestCase):
         )
 
     def test_draft_6(self):
-        schema = {"$schema": "http://json-schema.org/draft-06/schema"}
-        self.assertIs(
-            validators.validator_for(schema),
-            validators.Draft6Validator,
-        )
-
         schema = {"$schema": "http://json-schema.org/draft-06/schema#"}
         self.assertIs(
             validators.validator_for(schema),
@@ -1047,14 +1030,6 @@ class TestValidatorFor(TestCase):
 class TestValidate(TestCase):
     def test_draft3_validator_is_chosen(self):
         schema = {"$schema": "http://json-schema.org/draft-03/schema#"}
-        with mock.patch.object(
-            validators.Draft3Validator,
-            "check_schema",
-        ) as chk_schema:
-            validators.validate({}, schema)
-            chk_schema.assert_called_once_with(schema)
-        # Make sure it works without the empty fragment
-        schema = {"$schema": "http://json-schema.org/draft-03/schema"}
         with mock.patch.object(
             validators.Draft3Validator,
             "check_schema",
@@ -1166,10 +1141,13 @@ class TestRefResolver(TestCase):
             self.assertEqual(resolved, schema["a"])
 
     def test_it_retrieves_stored_refs(self):
+        print("PREP")
         with self.resolver.resolving(self.stored_uri) as resolved:
             self.assertIs(resolved, self.stored_schema)
 
-        self.resolver.store["cached_ref"] = {"foo": 12}
+        cached_uri = uri_reference("cached_ref").resolve_with(self.resolver.base_uri).unsplit()
+        self.resolver.store[cached_uri] = {"foo": 12}
+        print(self.resolver.base_uri)
         with self.resolver.resolving("cached_ref#/foo") as resolved:
             self.assertEqual(resolved, 12)
 
@@ -1196,27 +1174,27 @@ class TestRefResolver(TestCase):
         urlopen.assert_called_once_with("http://bar")
 
     def test_it_can_construct_a_base_uri_from_a_schema(self):
-        schema = {"id": "foo"}
+        schema = {"id": "http://foo.json#"}
         resolver = validators.RefResolver.from_schema(
             schema,
             id_of=lambda schema: schema.get(u"id", u""),
         )
-        self.assertEqual(resolver.base_uri, "foo")
-        self.assertEqual(resolver.resolution_scope, "foo")
+        self.assertEqual(resolver.base_uri, "http://foo.json")
+        self.assertEqual(resolver.resolution_scope, "http://foo.json")
         with resolver.resolving("") as resolved:
             self.assertEqual(resolved, schema)
         with resolver.resolving("#") as resolved:
             self.assertEqual(resolved, schema)
-        with resolver.resolving("foo") as resolved:
+        with resolver.resolving("http://foo.json") as resolved:
             self.assertEqual(resolved, schema)
-        with resolver.resolving("foo#") as resolved:
+        with resolver.resolving("http://foo.json#") as resolved:
             self.assertEqual(resolved, schema)
 
     def test_it_can_construct_a_base_uri_from_a_schema_without_id(self):
         schema = {}
         resolver = validators.RefResolver.from_schema(schema)
-        self.assertEqual(resolver.base_uri, "")
-        self.assertEqual(resolver.resolution_scope, "")
+        self.assertEqual(resolver.base_uri, validators.RefResolver.DEFAULT_BASE_URI)
+        self.assertEqual(resolver.resolution_scope, validators.RefResolver.DEFAULT_BASE_URI)
         with resolver.resolving("") as resolved:
             self.assertEqual(resolved, schema)
         with resolver.resolving("#") as resolved:

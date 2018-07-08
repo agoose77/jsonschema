@@ -6,10 +6,11 @@ import json
 import numbers
 
 from six import add_metaclass
+from rfc3986 import uri_reference
 
 from jsonschema import _utils, _validators, _types
 from jsonschema.compat import (
-    Sequence, urljoin, urlsplit, urldefrag, unquote, urlopen,
+    Sequence, urljoin, urlsplit, unquote, urlopen,
     str_types, int_types, iteritems, lru_cache,
 )
 from jsonschema.exceptions import (
@@ -495,6 +496,10 @@ Draft6Validator = create(
 _LATEST_VERSION = Draft6Validator
 
 
+def urijoin(base, ref):
+    return uri_reference(ref).resolve_with(base, strict=True).unsplit()
+
+
 class RefResolver(object):
     """
     Resolve JSON References.
@@ -540,6 +545,8 @@ class RefResolver(object):
 
     """
 
+    DEFAULT_BASE_URI = "urn:uuid:00000000-0000-0000-0000-000000000000"
+
     def __init__(
         self,
         base_uri,
@@ -551,9 +558,17 @@ class RefResolver(object):
         remote_cache=None,
     ):
         if urljoin_cache is None:
-            urljoin_cache = lru_cache(1024)(urljoin)
+            urljoin_cache = lru_cache(1024)(urijoin)
         if remote_cache is None:
             remote_cache = lru_cache(1024)(self.resolve_from_url)
+
+        if not base_uri:
+            base_uri = self.DEFAULT_BASE_URI
+
+        base_uri_ref = uri_reference(base_uri)
+        if not base_uri_ref.is_absolute():
+            assert not base_uri_ref.fragment, "Base URI must not have non-empty fragment"
+            base_uri = base_uri_ref.copy_with(fragment=None).unsplit()
 
         self.referrer = referrer
         self.cache_remote = cache_remote
@@ -597,7 +612,7 @@ class RefResolver(object):
 
     def push_scope(self, scope):
         self._scopes_stack.append(
-            self._urljoin_cache(self.resolution_scope, scope),
+            self._urljoin_cache(self.base_uri, scope)#
         )
 
     def pop_scope(self):
@@ -616,8 +631,7 @@ class RefResolver(object):
 
     @property
     def base_uri(self):
-        uri, _ = urldefrag(self.resolution_scope)
-        return uri
+        return uri_reference(self.resolution_scope).copy_with(fragment=None).unsplit()
 
     @contextlib.contextmanager
     def in_scope(self, scope):
@@ -649,11 +663,15 @@ class RefResolver(object):
             self.pop_scope()
 
     def resolve(self, ref):
-        url = self._urljoin_cache(self.resolution_scope, ref)
+        assert self.base_uri
+        url = self._urljoin_cache(self.base_uri, ref)#uri_reference(ref).resolve_with(self.base_uri, strict=True).unsplit()
         return url, self._remote_cache(url)
 
     def resolve_from_url(self, url):
-        url, fragment = urldefrag(url)
+        uri = uri_reference(url)
+        url = uri.copy_with(fragment=None).unsplit()
+        fragment = uri.fragment or ''
+
         try:
             document = self.store[url]
         except KeyError:
@@ -737,7 +755,6 @@ class RefResolver(object):
             requests = None
 
         scheme = urlsplit(uri).scheme
-
         if scheme in self.handlers:
             result = self.handlers[scheme](uri)
         elif (
