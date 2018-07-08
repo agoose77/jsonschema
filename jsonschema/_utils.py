@@ -15,7 +15,7 @@ class URIDict(MutableMapping):
     def normalize(self, uri):
         normalized = uri.normalize()
         assert not normalized.fragment, "URI had unexpected non-empty fragment"
-        return normalized.copy_with(fragment=None)
+        return normalized.replace(fragment=u'')
 
     def __init__(self, *args, **kwargs):
         self.store = dict()
