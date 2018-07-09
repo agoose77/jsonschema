@@ -6,7 +6,7 @@ import json
 import numbers
 
 from six import add_metaclass
-from rfc3986 import uri_reference
+from furl import furl
 
 from jsonschema import _utils, _validators, _types
 from jsonschema.compat import (
@@ -109,25 +109,16 @@ class _DefaultTypesDeprecatingMetaClass(type):
         return self._DEFAULT_TYPES
 
 
-def _as_uri(uri_or_str):
-    """Return URIReference parse result of input string,
-    or pass through URIReference argument
-    """
-    if isinstance(uri_or_str, basestring):
-        return uri_reference(uri_or_str)
-    return uri_or_str
-
-
 def _join_uri(base, ref):
     """Join absolute base URI with relative URI reference"""
-    return _as_uri(ref).resolve_with(base, strict=True)
+    return base.join(ref)
 
 
 def _load_uri_from_schema(schema, key):
     """Return URIReference object from URI given by key in schema.
     Return URIReference.fromstring('') if key not found
     """
-    return uri_reference(schema.get(key, ""))
+    return furl(schema.get(key, ""))
 
 
 def _id_of(schema):
@@ -278,7 +269,7 @@ def create(
                 return
 
             scope = id_of(_schema)
-            if scope.unsplit():
+            if scope.url:
                 self.resolver.push_scope(scope)
             try:
                 ref = _schema.get(u"$ref")
@@ -305,7 +296,7 @@ def create(
                             error.schema_path.appendleft(k)
                         yield error
             finally:
-                if scope.unsplit():
+                if scope.url:
                     self.resolver.pop_scope()
 
         def descend(self, instance, schema, path=None, schema_path=None):
@@ -564,8 +555,8 @@ class RefResolver(object):
 
     """
 
-    DEFAULT_BASE_URI = uri_reference(
-        "urn:uuid:00000000-0000-0000-0000-000000000000"
+    DEFAULT_BASE_URI = furl(
+        "file://fake.resource"
     )
 
     def __init__(
@@ -584,15 +575,13 @@ class RefResolver(object):
             remote_cache = lru_cache(1024)(self.resolve_from_url)
 
         if isinstance(base_uri, basestring):
-            base_uri = uri_reference(base_uri)
+            base_uri = furl(base_uri)
 
-        if not base_uri.unsplit():
+        if not base_uri.url:
             base_uri = self.DEFAULT_BASE_URI
 
-        if not base_uri.is_absolute():
-            if base_uri.fragment:
-                raise ValueError("Base URI must not have non-empty fragment")
-            base_uri = base_uri.copy_with(fragment=None)
+        if base_uri.fragment:
+            raise ValueError("Base URI must not have non-empty fragment")
 
         self.referrer = referrer
         self.cache_remote = cache_remote
@@ -604,7 +593,7 @@ class RefResolver(object):
             for id, validator in iteritems(meta_schemas)
         )
 
-        self.store.update({_as_uri(k): v for k, v in dict(store).items()})
+        self.store.update({furl(k): v for k, v in dict(store).items()})
         self.store[base_uri] = referrer
 
         self._urljoin_cache = urljoin_cache
@@ -656,7 +645,7 @@ class RefResolver(object):
 
     @property
     def base_uri(self):
-        return self.resolution_scope.copy_with(fragment=None)
+        return self.resolution_scope.copy().remove(fragment=True)
 
     @contextlib.contextmanager
     def in_scope(self, scope):
@@ -694,8 +683,8 @@ class RefResolver(object):
 
     def resolve_from_url(self, url):
         if url.fragment:
-            fragment = url.fragment
-            url = url.copy_with(fragment=None)
+            fragment = str(url.fragment)
+            url = url.copy().remove(fragment=True)
         else:
             fragment = ''
 
@@ -783,7 +772,7 @@ class RefResolver(object):
 
         scheme = uri.scheme
         if scheme in self.handlers:
-            result = self.handlers[scheme](uri)
+            result = self.handlers[scheme](uri.url)
         elif (
             scheme in [u"http", u"https"] and
             requests and
@@ -792,12 +781,12 @@ class RefResolver(object):
             # Requests has support for detecting the correct encoding of
             # json over http
             if callable(requests.Response.json):
-                result = requests.get(uri.unsplit()).json()
+                result = requests.get(uri.url).json()
             else:
-                result = requests.get(uri.unsplit()).json
+                result = requests.get(uri.url).json
         else:
             # Otherwise, pass off to urllib and assume utf-8
-            result = json.loads(urlopen(uri.unsplit()).read().decode("utf-8"))
+            result = json.loads(urlopen(uri.url).read().decode("utf-8"))
 
         if self.cache_remote:
             self.store[uri] = result

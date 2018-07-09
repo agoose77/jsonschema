@@ -6,6 +6,12 @@ import re
 from jsonschema.compat import str_types, MutableMapping
 
 
+import furl
+
+def h(self):
+    return hash(self.url)
+furl.furl.__hash__ = h
+
 class URIDict(MutableMapping):
     """
     Dictionary which uses normalized URIs as keys.
@@ -13,9 +19,10 @@ class URIDict(MutableMapping):
     """
 
     def normalize(self, uri):
-        normalized = uri.normalize()
+        normalized = uri.copy()
+        normalized.path.normalize()
         assert not normalized.fragment, "URI had unexpected non-empty fragment"
-        return normalized.copy_with(fragment=None)
+        return normalized.remove(fragment=True)
 
     def __init__(self, *args, **kwargs):
         self.store = dict()
